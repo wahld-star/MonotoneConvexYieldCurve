@@ -1,48 +1,12 @@
-"""
-Montone Convex Methodolgy
--
-
-Create a continuous zero curve condusive to option formula
-
-Interpaltion Function shall achieve each of the following:
-1) The discrete forward rate is recoeved by the curve
-2) the forward curve is positive
-3) The forward curve is continuous
-4) If the yield curve is upward sloping then the forward curve is positive if the yield curve is convex then the forward curve is decreasing
-
-"""
-
-
-
-"""
-Interpolation Method must satisfy the following 
-1) The curve must pass exactly pass through the left boundry
-2) The curve must pass exactly pass through the right boundry
-3) The average value of the function over the interval must equal a prescribed f(d); the area under the curve is fixed 
-"""
-
-
-#Step 1
-"""
-Construction of discrete forward rates
-- Rather than interpolating the interest rate curve itself we instead are going to interpolate a forward curve
-
-Begin by creating a curve that is equal toa defined forward rate derived from our selected spine points
-- Ensuring no-arbitrage (except under negative rate cases)
-- This calculated forward rate is assgiend as the mid-point of the interval of the selected spine points 
-
-"""
-
-#Import Packages
-import numpy as np
-import matplotlib.pyplot as plt
-from scipy.interpolate import CubicSpline
-import datetime as dt
-
-maturity_numerical = [1 / 12, 1.5 / 12, 2 / 12, 3 / 12, 4 / 12, 6 / 12, 1, 2, 3, 5, 7, 10, 20, 30]
 
 #Import Treasury Yields from US Treasury Site
 from UST_Prod import treasury_yields_import
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+#Set global Variables
+maturity_numerical = [1 / 12, 1.5 / 12, 2 / 12, 3 / 12, 4 / 12, 6 / 12, 1, 2, 3, 5, 7, 10, 20, 30]
 
 #Store Rates once retireved
 _Rates = None
@@ -53,7 +17,7 @@ def unpack_rate():
     if _Rates is None:
 
         #Import rates from treasury xml feed
-        spine_points = treasury_yields_import(date='03-12-2026')
+        spine_points = treasury_yields_import(date='03-23-2026')
         # Define maturiy points ot be graphed
         maturities = ["1M", "1.5M", "2M", "3M", "4M", "6M", "1Y", "2Y", "3Y", "5Y", "7Y", "10Y", "20Y", "30Y"]
         # Unpack dictionary within dictionary
@@ -61,23 +25,15 @@ def unpack_rate():
         _Rates = [yields[m] for m in maturities]
     return _Rates
 
-unpack_rate()
-
-
 #Begin by creating discrete forwards rates based on no-arb forward rate formula
 def discrete_fwd():
 
-    #Set numerical distance
-    maturity_numerical = [1 / 12, 1.5 / 12, 2 / 12, 3 / 12, 4 / 12, 6 / 12, 1, 2, 3, 5, 7, 10, 20, 30]
     #Retrieve rates
     no_arb_fwd = {}
     rates = unpack_rate()
     for i, rate in enumerate(rates[:-1]):
         no_arb_fwd[maturity_numerical[i]] = (rates[i+1] * maturity_numerical[i+1] - rates[i] * maturity_numerical[i]) / (maturity_numerical[i+1] - maturity_numerical[i])
     return no_arb_fwd
-
-discrete_fwd()
-
 
 #Setup foward continuously differentiable foward (equation 30)
 def continous_fwd():
@@ -102,9 +58,6 @@ def continous_fwd():
         cc_fwds[tau_current] = wt_start * right + wt_end * left
     return(cc_fwds)
 
-continous_fwd()
-
-
 def boundry_conditions():
     #Retrieve discrete fwds to which are attributed to the mid-point of spine points - f^d values
     discrete_fwds = list(discrete_fwd().values())
@@ -126,8 +79,6 @@ def boundry_conditions():
     #Check for curve equal to right boundry (equation 32)
     all_boundry_fwds[maturity_numerical[-1]] = fn
     return all_boundry_fwds
-
-boundry_conditions()
 
 def interpolater(t):
     """
@@ -180,23 +131,10 @@ def interpolater(t):
             #Apply weighting based on equation 35
             f_t = (f_prv * (1-4*x + 3*x**2) + f_curr * (-2*x + 3*x**2)) + fd * (6*x - 6*x**2)
 
-
             return f_t
 
         #If f_t is > fn
     return knot_fwds[-1]
-
-"""
-Interpolater still broken, need ot work on 30 year, currently discrete rate is being out put. 
-Need to understand the test_marturities better
-- Currently is a linear interpolation
-
-Next step is to enforce monotonicity and convexity 
-"""
-test_maturities = [0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 29]
-for t in test_maturities:
-    print(f"f({t}) = {interpolater(t):.4f}")
-
 
 def monotonicity(t):
     """
@@ -206,30 +144,207 @@ def monotonicity(t):
     Define g as g(tau) = f(tau) - fd_i
 
     """
-    #Define g
-    f_t = interpolater(t).values
     discrete_fwds = list(discrete_fwd().values())
-    for i in range(1, len(f_t)):
-        g_tau = f_t[i] - discrete_fwds[i]
 
-    print(f"f({t}) = {g_tau}")
-    return g_tau
+    #Find which interval t falls into to retrieve fd_i
+    for i in range(1, len(maturity_numerical)):
+        if t <= maturity_numerical[i]:
+            tau_prv = maturity_numerical[i-1]
+            tau_curr = maturity_numerical[i]
+            fd_i = discrete_fwds[i-1]
+            break
+
+    #Find g at  the interval boundries
+    g_prev = interpolater(tau_prv) - fd_i #g_{i-1}
+    g_curr = interpolater(tau_curr) - fd_i #g_i
+
+    #Normalized Position within interval
+    x = (t - tau_prv) / (tau_curr - tau_prv)
+
+    #Input g_tau into equation 35 (equation 47)
+    g_x  = g_prev * (1-4*x + 3*x**2) + g_curr * (-2*x + 3*x**2)
+
+    #Deriving with respect to x we get
+    delta_gx = g_prev * (-4 + 6*x) + g_curr * (-2 + 6*x)
+
+    #Create our four regions
+    #Region 1:
+    if (g_prev > 0 and -.5*g_prev >= g_curr >= -2 * g_prev) or (g_prev < 0 and -.5*g_prev <= g_curr <= -2 * g_prev):
+        pass
+    #region 2:
+    elif (g_prev > 0 and g_curr < -2 * g_prev) or (g_prev < 0 and g_curr > -2 * g_prev):
+        eta = (g_curr + 2*g_prev) / (g_curr - g_prev)
+        if x <= eta:
+            g_x = g_prev
+        else:
+            g_x = g_prev + (g_curr - g_prev) * ((x-eta)/(1-eta))**2
+    #Region 3:
+    elif (g_prev > 0 and 0 > g_curr > -.5* g_prev) or (g_prev < 0 and 0 < g_curr < -.5* g_prev):
+        eta = 3 * (g_curr / (g_curr - g_prev))
+        if x >= eta:
+            g_x = g_curr
+        else:
+            g_x = g_curr + (g_prev - g_curr) * ((eta-x)/eta)**2
+    #Region 4: *We must also enforce positivity within region 4*
+    elif (g_prev >= 0 and g_curr >= 0) or (g_prev <= 0 and g_curr <= 0):
+
+        #bound the knot forwards above zero
+        f_prev_bound = max(0, min(interpolater(tau_prv), 2 * fd_i))
+        f_curr_bound = max(0, min(interpolater(tau_curr), 2 * min(fd_i, discrete_fwds[i])))
+
+        g_prev_bound = f_prev_bound - fd_i
+        g_curr_bound = f_curr_bound - fd_i
+
+        eta = (g_curr_bound / (g_curr_bound + g_prev_bound))
+        A = -(g_prev_bound * g_curr_bound) / (g_prev_bound + g_curr_bound)
+        if x == eta:
+            g_x = A
+        elif x < eta:
+            g_x = A + (g_prev_bound - A) * ((eta-x)/eta)**2
+        elif x > eta:
+            g_x = A + (g_curr_bound - A) * ((x-eta)/(1-eta))**2
+    #Recover f_t from g_x
+    f_t = g_x + fd_i
+    return f_t
+
+def recover_zero_rates(t):
+    """
+    param t = tau
+
+    """
+    discrete_fwds = list(discrete_fwd().values())
+    input_rates = unpack_rate()
+
+    #Find which interval t falls into to retrieve fd_i
+    for i in range(1, len(maturity_numerical)):
+        if t <= maturity_numerical[i]:
+            tau_prv = maturity_numerical[i-1]
+            tau_curr = maturity_numerical[i]
+            fd_i = discrete_fwds[i-1]
+            break
+
+    #Find g at  the interval boundries
+    g_prev = monotonicity(tau_prv) - fd_i #g_{i-1}
+    g_curr = monotonicity(tau_curr) - fd_i #g_i
+    delta_tau = (tau_curr - tau_prv)
+
+    #Normalize x position
+    x = (t - tau_prv) / (tau_curr - tau_prv)
 
 
-test_maturities = [0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 29]
-for t in test_maturities:
-    print(f"f({t}) = {monotonicity(t):.4f}")
+
+    #Setup our four regions again:
+    #Region i
+    if (g_prev > 0 and -.5 * g_prev >= g_curr >= -2 * g_prev) or (g_prev < 0 and -.5 * g_prev <= g_curr <= -2 * g_prev):
+        #Define I_tau
+        I_tau = delta_tau * (g_prev*(x-2*x**2+x**3)+g_curr*(-x**2+x**3))
+    #Region ii
+    elif (g_prev > 0 and g_curr < -2 * g_prev) or (g_prev < 0 and g_curr > -2 * g_prev):
+        #Define eta
+        eta = (g_curr + 2*g_prev) / (g_curr - g_prev)
+        if 0 <= x <= eta: #Case 1
+            I_tau = delta_tau * (g_prev*x)
+        elif eta < x <= 1: # Case 2
+            I_tau = delta_tau * (g_prev*x + ((g_curr - g_prev) * (x-eta)**3) / (3*(1-eta)**2))
+    #Region iii
+    elif (g_prev > 0 and 0 > g_curr > -.5* g_prev) or (g_prev < 0 and 0 < g_curr < -.5* g_prev):
+        #define eta
+        eta = 3 * (g_curr / (g_curr - g_prev))
+        if 0 <= x <= eta:
+            I_tau = delta_tau * ((g_curr * x + ((g_prev - g_curr) * (eta**3 - (eta - x)**3) / (3*eta**2))))
+        elif eta < x <= 1:
+            I_tau = delta_tau * ((g_curr*x + (g_prev - g_curr) * eta / 3))
+    #Region iv
+    elif (g_prev >= 0 and g_curr >= 0) or (g_prev <= 0 and g_curr <= 0):
+        #define eta
+        #bound the knot forwards above zero
+        f_prev_bound = max(0, min(interpolater(tau_prv), 2 * fd_i))
+        f_curr_bound = max(0, min(interpolater(tau_curr), 2 * min(fd_i, discrete_fwds[i])))
+
+        g_prev_bound = f_prev_bound - fd_i
+        g_curr_bound = f_curr_bound - fd_i
+
+        eta = (g_curr_bound / (g_curr_bound + g_prev_bound))
+        A = -(g_prev_bound * g_curr_bound) / (g_prev_bound + g_curr_bound)
+        if 0 <= x <= eta: #Case 1
+            I_tau = delta_tau * (A*x + ((g_prev_bound- A) * ((eta**3 - (eta -x)**3) / (3*eta**2))))
+        elif eta < x <= 1: # Case 2
+            I_tau = delta_tau * (A*x + ((g_prev_bound - A)*eta)/3 + (g_curr_bound - A)*((x-eta)**3/(3*(1-eta)**2)))
+
+    else:
+        print("error region not found")
+        I_tau = 0.0
+
+    # Anchor accumulation to first known zero rate
+    # r(tau_0) * tau_0 is the starting point
+    r_prev_tau_prev = input_rates[0] * maturity_numerical[0]  # Fix: anchor to first rate
+    #Accumulate r_i-1 * tau_i-1 by summing all prior intervals
+    for j in range(1, i):
+        tau_j_prv = maturity_numerical[j-1]
+        tau_j_curr = maturity_numerical[j]
+        fd_j = discrete_fwds[j-1]
+        delta_tau_j = tau_j_curr - tau_j_prv
+
+        #G at interval boundries for this prior period
+        g_j_prv = monotonicity(tau_j_prv) - fd_j
+        g_j_curr = monotonicity(tau_j_curr) - fd_j
+
+        # Determine region and compute I_j at x=1 (full interval)
+        if (g_j_prv > 0 and -0.5*g_j_prv >= g_j_curr >= -2*g_j_prv) or \
+           (g_j_prv < 0 and -0.5*g_j_prv <= g_j_curr <= -2*g_j_prv):
+            I_j = delta_tau_j * (
+                g_j_prv * (1 - 2 + 1) +
+                g_j_curr * (-1 + 1)
+            )  # = 0 by no-arbitrage
+
+        elif (g_j_prv > 0 and g_j_curr < -2*g_j_prv) or \
+             (g_j_prv < 0 and g_j_curr > -2*g_j_prv):
+            eta_j = (g_j_curr + 2*g_j_prv) / (g_j_curr - g_j_prv)
+            I_j = delta_tau_j * (
+                g_j_prv * 1 +
+                (g_j_curr - g_j_prv) * (1 - eta_j)**3 / (3 * (1 - eta_j)**2)
+            )  # x=1 so always in Case 2
+
+        elif (g_j_prv > 0 and 0 > g_j_curr > -0.5*g_j_prv) or \
+             (g_j_prv < 0 and 0 < g_j_curr < -0.5*g_j_prv):
+            eta_j = 3 * (g_j_curr / (g_j_curr - g_j_prv))
+            I_j = delta_tau_j * (
+                g_j_curr * 1 +
+                (g_j_prv - g_j_curr) * eta_j / 3
+            )  # x=1 so always in Case 2
+
+        elif (g_j_prv >= 0 and g_j_curr >= 0) or \
+             (g_j_prv <= 0 and g_j_curr <= 0):
+            f_j_prv_bound = max(0, min(interpolater(tau_j_prv), 2 * fd_j))
+            f_j_curr_bound = max(0, min(interpolater(tau_j_curr), 2 * min(fd_j, discrete_fwds[j])))
+            g_j_prv_bound = f_j_prv_bound - fd_j
+            g_j_curr_bound = f_j_curr_bound - fd_j
+            eta_j = g_j_curr_bound / (g_j_curr_bound + g_j_prv_bound)
+            A_j = -(g_j_prv_bound * g_j_curr_bound) / (g_j_prv_bound + g_j_curr_bound)
+            I_j = delta_tau_j * (
+                A_j * 1 +
+                (g_j_prv_bound - A_j) * eta_j / 3 +
+                (g_j_curr_bound - A_j) * (1 - eta_j)**3 / (3 * (1 - eta_j)**2)
+            )  # x=1 so always in Case 2
 
 
+        r_prev_tau_prev += fd_j * delta_tau_j + I_j
 
+    #Equation 81
+    r_t = (1/t) * (r_prev_tau_prev + fd_i * (t - tau_prv) + I_tau)
 
+    return r_t
 
+#Plot
+t_grid = np.linspace(maturity_numerical[0], maturity_numerical[-1], 1000)
+zero_curve = [recover_zero_rates(t) for t in t_grid]
 
-
-
-
-
-
-
-
-
+plt.figure(figsize=(12, 6))
+plt.plot(t_grid, zero_curve, label='Zero Curve', color='red')
+plt.scatter(maturity_numerical, unpack_rate(), color='black', zorder=5, label='Input Rates')
+plt.xlabel('Maturity (Years)')
+plt.ylabel('Rate (%)')
+plt.title('Monotone Convex Forward and Zero Curves')
+plt.legend()
+plt.grid(True)
+plt.show()
