@@ -1,5 +1,9 @@
-# MonotoneConvexYieldCurve
+# Yield Curve Construction using various interpolation methods
 
-# This repository attempts to create a yield curve using the historical data from treasury departments xml feed
+This repository allows users to construct Yield Curves using various interpolation methods. Data is retrieved via the US Department of Treasury historical treasury yield xml feed. 
 
-### Under the current iteration only cubic spline interpolations is available 
+## Data Retrieval 
+Historical data is retrieved via the UST_Prod.py file. This function utilizes the 
+
+
+
