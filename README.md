@@ -2,6 +2,7 @@
 
 This repository allows users to construct Yield Curves using various interpolation methods.<br>Data is retrieved via the US Department of Treasury historical treasury yield xml feed.<br>https://home.treasury.gov/sites/default/files/interest-rates/yield.xml
 
+
 ## Data Retrieval 
 Historical data is retrieved via the UST_Prod.py file <br>
 
@@ -16,6 +17,14 @@ Packages Utilized:
 Parameters:
 - date -> The date parameter defines the value date for which the rates are pulled from the xml feed
 - For weekends or holidays the previous business day will automatically be retrieved <br>
+
+
+## Usage
+
+
+
+
+## Further Reading 
 
 
 
