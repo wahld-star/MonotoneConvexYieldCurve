@@ -1,4 +1,35 @@
+"""
+Montone Convex Methodolgy
+-
 
+Create a continuous zero curve condusive to option formula
+
+Interpaltion Function shall achieve each of the following:
+1) The discrete forward rate is recoeved by the curve
+2) the forward curve is positive
+3) The forward curve is continuous
+4) If the yield curve is upward sloping then the forward curve is positive if the yield curve is convex then the forward curve is decreasing
+
+"""
+
+"""
+Interpolation Method must satisfy the following
+1) The curve must pass exactly pass through the left boundry
+2) The curve must pass exactly pass through the right boundry
+3) The average value of the function over the interval must equal a prescribed f(d); the area under the curve is fixed
+"""
+
+
+#Step 1
+"""
+Construction of discrete forward rates
+- Rather than interpolating the interest rate curve itself we instead are going to interpolate a forward curve
+
+Begin by creating a curve that is equal toa defined forward rate derived from our selected spine points
+- Ensuring no-arbitrage (except under negative rate cases)
+- This calculated forward rate is assgiend as the mid-point of the interval of the selected spine points
+
+"""
 #Import Treasury Yields from US Treasury Site
 from UST_Prod import treasury_yields_import
 import numpy as np
@@ -206,6 +237,116 @@ def monotonicity(t):
     #Recover f_t from g_x
     f_t = g_x + fd_i
     return f_t
+
+def amelioration(amelioration, t, LAMDA='0.2'):
+    if not amelioration:
+        return monotonicity(t)
+
+    discrete_fwds = list(discrete_fwd().values())
+
+    #Retrieve tau
+    tau_0 = maturity_numerical[0]
+    tau_1 = maturity_numerical[1]
+    tau_2 = maturity_numerical[2]
+    tau_n = maturity_numerical[-1]
+    tau_n1 = maturity_numerical[-2]
+    tau_n2 = maturity_numerical[-3]
+
+    fd_1 = discrete_fwds[0]
+    fd_2 = discrete_fwds[1]
+    fd_n = discrete_fwds[-1]
+    fd_n1 = discrete_fwds[-2]
+
+    #a) Add additional false intervals adjacent to t
+    #Equation 72 (Previous interval)
+    tau_minus = tau_0 - (tau_1 - tau_0)
+    fd_0 = fd_1 - ((tau_1 - tau_0)/(tau_2 - tau_0)) * (fd_2 - fd_1)
+    #Equation 73 (Next interval)
+    tau_plus = tau_n + (tau_n - tau_n1)
+    fd_plus = fd_n + ((tau_n - tau_n1)/(tau_n - tau_n2)) * (fd_n - fd_n1)
+
+    #Add new intervals into maturity and forward lists
+    ext_tau = [tau_minus] + maturity_numerical + [tau_plus]
+    ext_fd = [fd_0] + discrete_fwds + [fd_plus]
+
+    #b) select f_i through linear interpolation, recreate our mid-point anchors
+    knot_fwds = []
+    for i in range (1, len(ext_tau)-1):
+        tau_prev = ext_tau[i-1]
+        tau_curr = ext_tau[i]
+        tau_next = ext_tau[i+1]
+        fd_i = ext_fd[i-1] # left interval
+        fd_next = ext_fd[i] # right interval
+
+        wt_left = (tau_curr-tau_prev)/(tau_next-tau_prev)
+        wt_right = (tau_next-tau_curr)/(tau_next-tau_prev)
+
+        fi = wt_left * fd_next + wt_right * fd_i
+        knot_fwds.append(fi)
+
+    #c) adjust fi to fall within target ranges
+    #set lambda parameter (using .2 because thats what the paper suggests) LAMDA determines smoothness, trades locality for smoothing
+    LAMBDA = LAMDA
+    adj_fwds = knot_fwds.copy()
+    for i in range (1, len(maturity_numerical)-1):
+        #retrieve interval tau
+        tau_prev = ext_tau[i-1]
+        tau_curr = ext_tau[i]
+        tau_next = ext_tau[i+1]
+        tau_next2 = ext_tau[i+2]
+
+        fd_i = ext_fd[i]
+        fd_prev = ext_fd[i-1]
+        fd_next = ext_fd[i+1]
+        fd_next2 = ext_fd[i+2]
+        fi = knot_fwds[i]
+
+        #Compute theta
+        theta_minus = ((tau_curr - tau_prev)/(tau_curr - tau_next2)) * (fd_i - fd_prev)
+        theta_plus = ((tau_next - tau_curr)/(tau_next2-tau_curr)) * (fd_next - fd_i)
+
+        #Determine target range based on discrete fwd
+        if fd_prev < fd_i <= fd_next:                               #Increasing
+            f_min1 = min(fd_i + 0.5 * theta_minus, fd_next)
+            f_max1 = min(fd_i + 2 * theta_minus, fd_next)
+        elif fd_prev < fd_i and fd_i > fd_next:                     #local max
+            f_min1 = max(fd_i - 0.5 * LAMDA * theta_minus, fd_next)
+            f_max1 = fd_i
+        elif fd_prev >= fd_i and fd_i <= fd_next:                   #local min
+            f_min1 = fd_i
+            f_max1 = max(fd_i - 0.5 * LAMDA * theta_minus, fd_next)
+        elif fd_prev >= fd_i >= fd_next:                            #Decreasing
+            f_min1 = max(fd_i + 2 * theta_minus, fd_next)
+            f_max1 = max(fd_i + 0.5 * theta_minus, fd_next)
+
+        #Repeat previous step determining following interval range
+        if fd_i < fd_next < fd_next2:                               #Increasing
+            f_min2 = max(fd_next - 2 * theta_plus, fd_i)
+            f_max2 = max(fd_next - 0.5 * theta_plus, fd_i)
+        elif fd_i < fd_next and fd_next > fd_next2:                 #local max
+            f_min2 = max(fd_next + 0.5 * LAMDA * theta_plus, fd_i)
+            f_max2 = fd_next
+        elif fd_i >= fd_next and fd_next <= fd_next2:               #local min
+            f_min2 = fd_next
+            f_max2 = min(fd_next + 0.5 * LAMDA * theta_plus, fd_i)
+        elif fd_i >= fd_next >= fd_next2:                           #Decreasing
+            f_min2 = min(fd_next - 0.5 * theta_plus, fd_i)
+            f_max2 = min(fd_next - 2 * theta_plus, fd_i)
+
+
+        #Intersect both ranges
+        f_min_combined = max(f_min1, f_min2)
+        f_max_combined = min(f_max1, f_max2)
+
+        if f_min_combined <= f_max_combined:
+            #Ranges intersect so we implement equation 76
+            adj_fwds[i] = max(f_min_combined, min(fi, f_max_combined))
+        else:
+            #Ranges don't intersect so we implement equation 77 to clamp to our knots to the edges
+            if fi < min(f_max1, f_max2):
+                adj_fwds[i] = min(f_max1, f_max2)
+            elif fi > max(f_min1, f_min2):
+                adj_fwds[i] = max(f_min1, f_min2)
 
 def recover_zero_rates(t):
     """
